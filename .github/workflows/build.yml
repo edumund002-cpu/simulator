@@ -1,0 +1,58 @@
+name: Build and test Wealthathon desktop packages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            tag: windows-x64
+          - os: macos-15-intel
+            tag: macos-intel
+          - os: macos-15
+            tag: macos-apple-silicon
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Unit tests and headless GUI smoke test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q
+      - name: Build unsigned standalone application
+        run: python -m PyInstaller --noconfirm --clean --windowed --onedir --name WealthathonSimulator --collect-data wealthathon main.py
+      - name: Verify packaged Windows executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & .\dist\WealthathonSimulator\WealthathonSimulator.exe --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify packaged macOS application
+        if: runner.os == 'macOS'
+        shell: bash
+        run: dist/WealthathonSimulator.app/Contents/MacOS/WealthathonSimulator --self-test
+      - name: Zip Windows bundle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path dist\WealthathonSimulator -DestinationPath "WealthathonSimulator_${{ matrix.tag }}.zip" -Force
+      - name: Zip macOS application
+        if: runner.os == 'macOS'
+        shell: bash
+        run: ditto -c -k --sequesterRsrc --keepParent dist/WealthathonSimulator.app "WealthathonSimulator_${{ matrix.tag }}.zip"
+      - name: Upload application archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: WealthathonSimulator-${{ matrix.tag }}
+          path: WealthathonSimulator_${{ matrix.tag }}.zip
+          if-no-files-found: error
